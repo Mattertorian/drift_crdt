@@ -16,6 +16,7 @@ dependencies:
   sqlite_crdt:
     git:
       url: https://github.com/Mattertorian/sqlite_crdt.git
+      ref: 3ab9c8a8039d309775e32af3ef252294f04fa1ca
 
 dev_dependencies:
   drift_dev: ^2.26.0

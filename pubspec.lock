@@ -518,8 +518,8 @@ packages:
     dependency: transitive
     description:
       path: "."
-      ref: HEAD
-      resolved-ref: "4a54d6c95e73ec559abfa5ac9605111de94ff843"
+      ref: deeebd6c70a2ecde1131bdc53ac43a9f02455401
+      resolved-ref: deeebd6c70a2ecde1131bdc53ac43a9f02455401
       url: "https://github.com/Mattertorian/sql_crdt.git"
     source: git
     version: "3.0.3"
@@ -535,8 +535,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: HEAD
-      resolved-ref: ca7ac09255ebb33543ae2bf71a2cc9775aa04f6f
+      ref: "3ab9c8a8039d309775e32af3ef252294f04fa1ca"
+      resolved-ref: "3ab9c8a8039d309775e32af3ef252294f04fa1ca"
       url: "https://github.com/Mattertorian/sqlite_crdt.git"
     source: git
     version: "3.0.2"
