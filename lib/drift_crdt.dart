@@ -33,9 +33,9 @@ class SqliteTransactionCrdt {
   SqliteTransactionCrdt(this.txn);
 
   Future<void> execute(String sql, [List<Object?>? args]) async {
-    if (sql.contains('CREATE TABLE')) {
-      sql = DriftCrdtUtils.prepareCreateTableQuery(sql);
-    }
+    // if (sql.contains('CREATE TABLE')) {
+    //   sql = DriftCrdtUtils.prepareCreateTableQuery(sql);
+    // }
     await txn.execute(sql, args);
   }
 
@@ -70,9 +70,9 @@ class _CrdtQueryDelegate extends QueryDelegate {
 
   @override
   Future<void> runCustom(String statement, List<Object?> args) {
-    if (statement.contains('CREATE TABLE')) {
-      statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
-    }
+    // if (statement.contains('CREATE TABLE')) {
+    //   statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+    // }
     return _transactionCrdt.execute(statement, args);
   }
 
@@ -120,9 +120,9 @@ class _CrdtTransactionDelegate extends SupportedTransactionDelegate {
 
     for (final arg in statements.arguments) {
       var statement = statements.statements[arg.statementIndex];
-      if (statement.contains('CREATE TABLE')) {
-        statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
-      }
+      // if (statement.contains('CREATE TABLE')) {
+      //   statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+      // }
       batch.execute(statement, arg.arguments);
     }
 
@@ -133,8 +133,12 @@ class _CrdtTransactionDelegate extends SupportedTransactionDelegate {
 // TODO: Sort out migration
 class _CrdtDelegateInMemory extends _CrdtDelegate {
   _CrdtDelegateInMemory({singleInstance = true, migrate = false, creator})
-      : super(false, '',
-            singleInstance: singleInstance, migrate: migrate, creator: creator);
+      : super(
+          path: '',
+          singleInstance: singleInstance,
+          migrate: migrate,
+          creator: creator,
+        );
 
   @override
   Future<void> open(QueryExecutorUser user) async {
@@ -151,7 +155,7 @@ class _CrdtDelegate extends DatabaseDelegate {
   bool _isOpen = false;
   bool _queryDeleted = false;
 
-  final bool inDbFolder;
+  // final bool inDbFolder;
   final String path;
   final bool migrate;
 
@@ -160,8 +164,12 @@ class _CrdtDelegate extends DatabaseDelegate {
 
   late _CrdtTransactionDelegate? _transactionDelegate;
 
-  _CrdtDelegate(this.inDbFolder, this.path,
-      {this.singleInstance = true, this.creator, this.migrate = false});
+  _CrdtDelegate({
+    required this.path,
+    this.singleInstance = true,
+    this.creator,
+    this.migrate = false,
+  });
 
   @override
   late final DbVersionDelegate versionDelegate =
@@ -233,9 +241,9 @@ class _CrdtDelegate extends DatabaseDelegate {
 
     for (final arg in statements.arguments) {
       var statement = statements.statements[arg.statementIndex];
-      if (statement.contains('CREATE TABLE')) {
-        statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
-      }
+      // if (statement.contains('CREATE TABLE')) {
+      //   statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+      // }
       batch.execute(statement, arg.arguments);
     }
 
@@ -252,9 +260,9 @@ class _CrdtDelegate extends DatabaseDelegate {
         _queryDeleted = false;
         break;
       default:
-        if (statement.contains('CREATE TABLE')) {
-          statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
-        }
+        // if (statement.contains('CREATE TABLE')) {
+        //   statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+        // }
         return sqliteCrdt.execute(statement, args);
     }
     return Future.value();
@@ -327,10 +335,12 @@ class CrdtQueryExecutor extends DelegatedDatabase {
       DatabaseCreator? creator,
       bool migrate = false})
       : super(
-            _CrdtDelegate(false, path,
-                singleInstance: singleInstance,
-                creator: creator,
-                migrate: migrate),
+            _CrdtDelegate(
+              path: path,
+              singleInstance: singleInstance,
+              creator: creator,
+              migrate: migrate,
+            ),
             logStatements: logStatements);
 
   CrdtQueryExecutor.inMemory(
@@ -340,30 +350,6 @@ class CrdtQueryExecutor extends DelegatedDatabase {
       bool migrate = false})
       : super(
             _CrdtDelegateInMemory(
-                singleInstance: singleInstance,
-                creator: creator,
-                migrate: migrate),
-            logStatements: logStatements);
-
-  /// A query executor that will store the database in the file declared by
-  /// [path], which will be resolved relative to [s.getDatabasesPath()].
-  /// If [logStatements] is true, statements sent to the database will
-  /// be [print]ed, which can be handy for debugging. The [singleInstance]
-  /// parameter sets the corresponding parameter on [s.openDatabase].
-  /// The [creator] will be called when the database file doesn't exist. It can
-  /// be used to, for instance, populate default data from an asset. Note that
-  /// migrations might behave differently when populating the database this way.
-  /// For instance, a database created by an [creator] will not receive the
-  /// [MigrationStrategy.onCreate] callback because it hasn't been created by
-  /// drift.
-  CrdtQueryExecutor.inDatabaseFolder(
-      {required String path,
-      bool? logStatements,
-      bool singleInstance = true,
-      DatabaseCreator? creator,
-      bool migrate = false})
-      : super(
-            _CrdtDelegate(true, path,
                 singleInstance: singleInstance,
                 creator: creator,
                 migrate: migrate),

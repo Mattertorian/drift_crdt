@@ -25,17 +25,17 @@ class DriftCrdtUtils {
   /// We need to delete CRDT columns from a CreateTable statement because the
   /// `sqlite_crdt` library is going to insert them again.
   /// But we need to have them in our definitions to make other logic work correctly
-  static String prepareCreateTableQuery(String query) {
-    SqlEngine parser = SqlEngine();
-    CreateTableStatement statement =
-        (parser.parse(query).rootNode) as CreateTableStatement;
-    final columnsToExclude = ['is_deleted', 'hlc', 'node_id', 'modified'];
-    statement.columns = statement.columns
-        .where((ColumnDefinition element) =>
-            !columnsToExclude.contains(element.columnName))
-        .toList();
-    return statement.toSql();
-  }
+  // static String prepareCreateTableQuery(String query) {
+  //   SqlEngine parser = SqlEngine();
+  //   CreateTableStatement statement =
+  //       (parser.parse(query).rootNode) as CreateTableStatement;
+  //   final columnsToExclude = ['is_deleted', 'hlc', 'node_id', 'modified'];
+  //   statement.columns = statement.columns
+  //       .where((ColumnDefinition element) =>
+  //           !columnsToExclude.contains(element.columnName))
+  //       .toList();
+  //   return statement.toSql();
+  // }
 
   /// Prepare the Select [statement] to be in line with the CRDT requirements
   /// if [queryDeleted] is set to `false` then we query only regular records
