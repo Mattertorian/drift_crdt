@@ -26,12 +26,6 @@ dev_dependencies:
   test: ^1.22.0
   build_runner: ^2.4.5
 
-platforms:
-  linux:
-  windows:
-  macos:
-  android:
-  ios:
 
 # flutter:
 #   assets:

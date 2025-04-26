@@ -328,7 +328,7 @@ class CrdtQueryExecutor extends DelegatedDatabase {
   /// For instance, a database created by an [creator] will not receive the
   /// [MigrationStrategy.onCreate] callback because it hasn't been created by
   /// drift.
-  CrdtQueryExecutor(
+  CrdtQueryExecutor.open(
       {required String path,
       bool? logStatements,
       bool singleInstance = true,
@@ -367,7 +367,7 @@ class CrdtQueryExecutor extends DelegatedDatabase {
   ///
   /// Note that this returns null until the drift database has been opened.
   /// A drift database is opened lazily when the first query runs.
-  SqliteCrdt? get sqfliteDb {
+  SqliteCrdt? get crdt {
     final crdtDelegate = delegate as _CrdtDelegate;
     return crdtDelegate.isOpen ? crdtDelegate.sqliteCrdt : null;
   }
