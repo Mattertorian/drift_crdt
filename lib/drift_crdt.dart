@@ -9,11 +9,14 @@ import 'dart:io';
 
 import 'package:drift/backends.dart';
 import 'package:drift/drift.dart';
+import 'package:drift_crdt/utils.dart';
 import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart' as sqflite;
-import 'package:synchroflite/synchroflite.dart';
+import 'package:sqlite_crdt/sqlite_crdt.dart';
+import 'package:sqlparser/sqlparser.dart';
+import 'package:sqlparser/utils/node_to_text.dart';
 
-export 'package:crdt/crdt.dart';
+export 'package:sqlite_crdt/sqlite_crdt.dart'
+    show Hlc, CrdtChangeset, parseCrdtChangeset, CrdtTableChangeset;
 
 const _crdtDeletedOn = 'CRDT QUERY DELETED ON';
 const _crdtDeletedOff = 'CRDT QUERY DELETED OFF';
@@ -25,11 +28,14 @@ typedef DatabaseCreator = FutureOr<void> Function(File file);
 typedef Query = (String sql, List<Object?> args);
 
 class SqliteTransactionCrdt {
-  final TransactionSynchroflite txn;
+  final CrdtExecutor txn;
 
   SqliteTransactionCrdt(this.txn);
 
   Future<void> execute(String sql, [List<Object?>? args]) async {
+    if (sql.contains('CREATE TABLE')) {
+      sql = DriftCrdtUtils.prepareCreateTableQuery(sql);
+    }
     await txn.execute(sql, args);
   }
 
@@ -40,15 +46,19 @@ class SqliteTransactionCrdt {
 
   Future<List<Map<String, Object?>>> rawQuery(String sql,
       [List<Object?>? arguments]) {
-    return txn.rawQuery(sql, arguments);
+    return txn.query(sql, arguments);
   }
 
-  Future<int> rawUpdate(String sql, [List<Object?>? arguments]) {
-    return txn.rawUpdate(sql, arguments);
+  Future<int> rawUpdate(String sql, [List<Object?>? arguments]) async {
+    await txn.execute(sql, arguments);
+    return txn.query('SELECT changes()').then((List result) => result.length);
   }
 
-  Future<int> rawInsert(String sql, [List<Object?>? arguments]) {
-    return txn.rawInsert(sql, arguments);
+  Future<int> rawInsert(String sql, [List<Object?>? arguments]) async {
+    await txn.execute(sql, arguments);
+    return txn
+        .query('SELECT last_insert_rowid()')
+        .then((List result) => result.first.values.first);
   }
 }
 
@@ -60,6 +70,9 @@ class _CrdtQueryDelegate extends QueryDelegate {
 
   @override
   Future<void> runCustom(String statement, List<Object?> args) {
+    if (statement.contains('CREATE TABLE')) {
+      statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+    }
     return _transactionCrdt.execute(statement, args);
   }
 
@@ -69,14 +82,18 @@ class _CrdtQueryDelegate extends QueryDelegate {
   }
 
   @override
-  Future<QueryResult> runSelect(String statement, List<Object?> args) async {
-    if (_queryDeleted) {
-      final result = await _transactionCrdt.query(statement, args);
-      return QueryResult.fromRows(result);
-    } else {
-      final result = await _transactionCrdt.rawQuery(statement, args);
-      return QueryResult.fromRows(result);
+  Future<QueryResult> runSelect(String sql, List<Object?> args) async {
+    SqlEngine parser = SqlEngine();
+    final parsed = parser.parse(sql);
+    Statement statement = (parsed.rootNode) as Statement;
+    if (!DriftCrdtUtils.isSpecialQuery(parsed) &&
+        statement is SelectStatement) {
+      DriftCrdtUtils.prepareSelectStatement(statement, _queryDeleted);
+      sql = statement.toSql();
     }
+
+    final result = await _transactionCrdt.query(sql, args);
+    return QueryResult.fromRows(result);
   }
 
   @override
@@ -93,22 +110,27 @@ class _CrdtTransactionDelegate extends SupportedTransactionDelegate {
 
   @override
   FutureOr<void> startTransaction(Future Function(QueryDelegate) run) {
-    return api.synchroflite.transaction((txn) async {
+    return api.sqliteCrdt.transaction((txn) async {
       return run(_CrdtQueryDelegate(SqliteTransactionCrdt(txn), queryDeleted));
     });
   }
 
   Future<void> runBatched(BatchedStatements statements) async {
-    final batch = api.synchroflite.batch();
+    final batch = api.sqliteCrdt.batch();
 
     for (final arg in statements.arguments) {
-      batch.execute(statements.statements[arg.statementIndex], arg.arguments);
+      var statement = statements.statements[arg.statementIndex];
+      if (statement.contains('CREATE TABLE')) {
+        statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+      }
+      batch.execute(statement, arg.arguments);
     }
 
-    await batch.apply(noResult: true);
+    await batch.commit();
   }
 }
 
+// TODO: Sort out migration
 class _CrdtDelegateInMemory extends _CrdtDelegate {
   _CrdtDelegateInMemory({singleInstance = true, migrate = false, creator})
       : super(false, '',
@@ -116,9 +138,8 @@ class _CrdtDelegateInMemory extends _CrdtDelegate {
 
   @override
   Future<void> open(QueryExecutorUser user) async {
-    synchroflite = await Synchroflite.openInMemory(
+    sqliteCrdt = await SqliteCrdt.openInMemory(
       singleInstance: singleInstance,
-      migrate: migrate,
     );
     _transactionDelegate = _CrdtTransactionDelegate(this);
     _isOpen = true;
@@ -126,7 +147,7 @@ class _CrdtDelegateInMemory extends _CrdtDelegate {
 }
 
 class _CrdtDelegate extends DatabaseDelegate {
-  late Synchroflite synchroflite;
+  late SqliteCrdt sqliteCrdt;
   bool _isOpen = false;
   bool _queryDeleted = false;
 
@@ -144,7 +165,7 @@ class _CrdtDelegate extends DatabaseDelegate {
 
   @override
   late final DbVersionDelegate versionDelegate =
-      _CrdtVersionDelegate(synchroflite);
+      _CrdtVersionDelegate(sqliteCrdt);
 
   @override
   TransactionDelegate get transactionDelegate {
@@ -158,12 +179,14 @@ class _CrdtDelegate extends DatabaseDelegate {
 
   @override
   Future<void> open(QueryExecutorUser user) async {
-    String resolvedPath;
-    if (inDbFolder) {
-      resolvedPath = join(await sqflite.getDatabasesPath(), path);
-    } else {
-      resolvedPath = path;
-    }
+    // String resolvedPath;
+    // if (inDbFolder) {
+    //   resolvedPath = join(await sqflite.getDatabasesPath(), path);
+    // } else {
+    //   resolvedPath = path;
+    // }
+
+    final resolvedPath = path;
 
     final file = File(resolvedPath);
     if (creator != null && !await file.exists()) {
@@ -173,11 +196,12 @@ class _CrdtDelegate extends DatabaseDelegate {
       await creator!(file);
     }
 
+    // TODO: Sort out migration
     // default value when no migration happened
-    synchroflite = await Synchroflite.open(
+    sqliteCrdt = await SqliteCrdt.open(
       resolvedPath,
       singleInstance: singleInstance,
-      migrate: migrate,
+      // migrate: migrate,
     );
     _transactionDelegate = _CrdtTransactionDelegate(this);
     _isOpen = true;
@@ -185,28 +209,37 @@ class _CrdtDelegate extends DatabaseDelegate {
 
   Future<void> openInMemory(QueryExecutorUser user) async {
     // default value when no migration happened
-    synchroflite = await Synchroflite.openInMemory(
+    sqliteCrdt = await SqliteCrdt.openInMemory(
       singleInstance: singleInstance,
-      migrate: migrate,
+      // migrate: migrate,
     );
     _transactionDelegate = _CrdtTransactionDelegate(this);
     _isOpen = true;
   }
 
+  Future<void> openEncrypted(QueryExecutorUser user) async {
+    // sqliteCrdt = await SqliteCrdt.openEncrypted()
+    throw UnimplementedError('SqlCipher variant is not yet implemented');
+  }
+
   @override
   Future<void> close() {
-    return synchroflite.close();
+    return sqliteCrdt.close();
   }
 
   @override
   Future<void> runBatched(BatchedStatements statements) async {
-    final batch = synchroflite.batch();
+    final batch = sqliteCrdt.batch();
 
     for (final arg in statements.arguments) {
-      batch.execute(statements.statements[arg.statementIndex], arg.arguments);
+      var statement = statements.statements[arg.statementIndex];
+      if (statement.contains('CREATE TABLE')) {
+        statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+      }
+      batch.execute(statement, arg.arguments);
     }
 
-    await batch.apply(noResult: true);
+    await batch.commit();
   }
 
   @override
@@ -219,41 +252,53 @@ class _CrdtDelegate extends DatabaseDelegate {
         _queryDeleted = false;
         break;
       default:
-        return synchroflite.execute(statement, args);
+        if (statement.contains('CREATE TABLE')) {
+          statement = DriftCrdtUtils.prepareCreateTableQuery(statement);
+        }
+        return sqliteCrdt.execute(statement, args);
     }
     return Future.value();
   }
 
   @override
-  Future<int> runInsert(String statement, List<Object?> args) {
-    return synchroflite.rawInsert(statement, args);
+  Future<int> runInsert(String statement, List<Object?> args) async {
+    await sqliteCrdt.execute(statement, args);
+    return sqliteCrdt
+        .query('SELECT last_insert_rowid()')
+        .then((List result) => result.first.values.first);
   }
 
   @override
-  Future<QueryResult> runSelect(String statement, List<Object?> args) async {
-    if (_queryDeleted) {
-      final result = await synchroflite.query(statement, args);
-      return QueryResult.fromRows(result);
-    } else {
-      final result = await synchroflite.rawQuery(statement, args);
-      return QueryResult.fromRows(result);
+  Future<QueryResult> runSelect(String sql, List<Object?> args) async {
+    SqlEngine parser = SqlEngine();
+    final parsed = parser.parse(sql);
+    Statement statement = (parsed.rootNode) as Statement;
+    if (!DriftCrdtUtils.isSpecialQuery(parsed) &&
+        statement is SelectStatement) {
+      DriftCrdtUtils.prepareSelectStatement(statement, _queryDeleted);
+      sql = statement.toSql();
     }
+    final result = await sqliteCrdt.query(sql, args);
+    return QueryResult.fromRows(result);
   }
 
   @override
-  Future<int> runUpdate(String statement, List<Object?> args) {
-    return synchroflite.rawUpdate(statement, args);
+  Future<int> runUpdate(String statement, List<Object?> args) async {
+    await sqliteCrdt.execute(statement, args);
+    return sqliteCrdt
+        .query('SELECT changes()')
+        .then((List result) => result.length);
   }
 }
 
 class _CrdtVersionDelegate extends DynamicVersionDelegate {
-  final Synchroflite _db;
+  final SqliteCrdt _db;
 
   _CrdtVersionDelegate(this._db);
 
   @override
   Future<int> get schemaVersion async {
-    final result = await _db.rawQuery('PRAGMA user_version;');
+    final result = await _db.query('PRAGMA user_version;');
     return result.single.values.first as int;
   }
 
@@ -336,9 +381,9 @@ class CrdtQueryExecutor extends DelegatedDatabase {
   ///
   /// Note that this returns null until the drift database has been opened.
   /// A drift database is opened lazily when the first query runs.
-  Synchroflite? get sqfliteDb {
+  SqliteCrdt? get sqfliteDb {
     final crdtDelegate = delegate as _CrdtDelegate;
-    return crdtDelegate.isOpen ? crdtDelegate.synchroflite : null;
+    return crdtDelegate.isOpen ? crdtDelegate.sqliteCrdt : null;
   }
 
   @override
@@ -354,7 +399,7 @@ class CrdtQueryExecutor extends DelegatedDatabase {
   Future<Hlc?> getLastModified(
       {String? onlyNodeId, String? exceptNodeId}) async {
     final crdtDelegate = delegate as _CrdtDelegate;
-    return crdtDelegate.synchroflite
+    return crdtDelegate.sqliteCrdt
         .getLastModified(onlyNodeId: onlyNodeId, exceptNodeId: exceptNodeId);
   }
 
@@ -374,7 +419,7 @@ class CrdtQueryExecutor extends DelegatedDatabase {
     Hlc? modifiedAfter,
   }) async {
     final crdtDelegate = delegate as _CrdtDelegate;
-    return crdtDelegate.synchroflite.getChangeset(
+    return crdtDelegate.sqliteCrdt.getChangeset(
         customQueries: customQueries,
         onlyTables: onlyTables,
         exceptNodeId: exceptNodeId,
@@ -385,7 +430,7 @@ class CrdtQueryExecutor extends DelegatedDatabase {
   /// merges the provided changeset with the database
   Future<void> merge(CrdtChangeset changeset) async {
     final crdtDelegate = delegate as _CrdtDelegate;
-    return crdtDelegate.synchroflite.merge(changeset);
+    return crdtDelegate.sqliteCrdt.merge(changeset);
   }
 }
 
