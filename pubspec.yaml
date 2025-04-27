@@ -1,6 +1,6 @@
 name: drift_crdt
 description: An implementation of a drift-based CRDT database, based on the `sqlite_crdt` and `drift` packages.
-version: 1.0.9
+version: 1.0.10
 publish_to: none
 # repository: https://github.com/JanezStupar/drift_crdt.git
 # homepage: https://janezstupar.com
@@ -16,7 +16,7 @@ dependencies:
   sqlite_crdt:
     git:
       url: https://github.com/Mattertorian/sqlite_crdt.git
-      ref: 3ab9c8a8039d309775e32af3ef252294f04fa1ca
+      ref: 085a8626c54049cdc4d66af02af0c88541b9a6da
 
 dev_dependencies:
   drift_dev: ^2.26.0
